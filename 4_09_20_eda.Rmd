@@ -1,0 +1,165 @@
+---
+title: "eda"
+author: "Shu Deng"
+date: "4/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(data.table)
+library(lubridate)
+
+theme_set(theme_bw())
+```
+
+###TODO
+1. map 
+2. inter
+
+```{r}
+df = read_csv("http://web.mta.info/developers/data/nyct/turnstile/turnstile_200104.txt")
+dt_raw = fread("http://web.mta.info/developers/data/nyct/turnstile/turnstile_200111.txt")
+dt_raw = dt_raw %>% janitor::clean_names()
+```
+
+to understand variables
+```{r}
+# df %>% count(DIVISION)
+# df %>% count(TIME)
+# df %>% count(STATION)
+# 
+# # check data in one station first 
+# df_59 = df %>% filter(str_detect(STATION,"59"))
+# df_59 %>% count(STATION)
+```
+
+```{r}
+dt_raw[,.N,by = desc]
+```
+
+```{r}
+dt_59st = dt_raw[station == "59 ST",]
+# dt_59st[,.N] # number of rows 
+colnames(dt_59st)
+dt_59st[, .N, by = .(division)]
+dt_59st[, .N, by =  .(station)]
+dt_59st[, .N, by =  .(time)]
+dt_59st[, .N, by =  .(c_a,unit)]
+dt_59st[time == "04:07:27",]
+
+dt_59st[, .N, by =  .(date)]
+dt_59st[, .N, by =  .(date,time)]
+dt_59st[, .N, by =  .(desc)]
+```
+
+
+get lags 
+```{r}
+dt_59st = setorder(dt_59st, date)
+# dt_59st[, lag.value := c(NA, entries[-.N]), by=.(unit,scp)]
+head(dt_59st)
+```
+
+Objective: how many people enter and exit this station
+```{r}
+dt_59st[, ppl_entered := entries - shift(entries), by=.(unit,scp)]
+dt_59st[, ppl_exited := exits - shift(exits), by=.(unit,scp)]
+
+dt_59st$ppl_entered %>% sum(na.rm = T)
+dt_59st[ppl_exited <= 0,] %>% view()
+dt_59st$ppl_exited %>% abs() %>% sum(na.rm = T)
+dt_59st$ppl_exited %>% sum(na.rm = T)
+# TOD find out why there is negative 
+# dt_59st$ppl_exited = abs(dt_59st$ppl_exited)
+
+# get total number of in and out each time point 
+dt_59st[,.(total = sum(ppl_entered)), .(date, time)] %>% 
+  ggplot(aes(x = time, y = total)) +
+  geom_line(aes(group = date, color = date))
+
+
+dt_59st[,.(total = sum(ppl_exited)), .(date, time)] %>% 
+  ggplot(aes(x = time, y = total)) +
+  geom_line(aes(group = date, color = date))
+
+
+dt_59st[,.(total_in = sum(ppl_entered), total_out = sum(ppl_exited)), .(date, time)] %>% 
+  melt(measure.vars = c("total_in","total_out")) %>% 
+  ggplot(aes(x = time, y = value, group = interaction(date,variable), colour = date, shape = variable)) +
+  geom_line(aes( )) +
+  geom_point()
+
+foo_1 =  dt_59st[,.(total_in = sum(ppl_entered), total_out = sum(ppl_exited)), .(date, time)]
+```
+
+
+try another stations 
+
+```{r}
+dt_raw[,.N,by=station]
+dt_49st = dt_raw[station == "49 ST",]
+dt_49st = setorder(dt_49st, date)
+dt_49st[, ppl_entered := entries - shift(entries), by=.(unit,scp)]
+dt_49st[, ppl_exited := exits - shift(exits), by=.(unit,scp)]
+
+dt_49st$ppl_entered %>% sum(na.rm = T)
+dt_49st$ppl_exited %>% abs() %>% sum(na.rm = T)
+dt_49st$ppl_exited %>% sum(na.rm = T)
+
+
+dt_49st[,.(total_in = sum(ppl_entered), total_out = sum(ppl_exited)), .(date, time)] %>% 
+  melt(measure.vars = c("total_in","total_out")) %>% 
+  ggplot(aes(x = time, y = value, group = interaction(date,variable), colour = date, shape = variable)) +
+  geom_line(aes( )) +
+  geom_point()
+
+```
+
+try multiple stations 
+
+```{r}
+dt_raw[str_detect(linename, "A"),]
+dt_raw[linename == "A",] %>% view()
+```
+
+"A" line 
+```{r}
+dt_raw[,.N,by=linename] 
+dt_a_line = dt_raw[linename == "A",]
+dt_a_line = setorder(dt_a_line, date)
+dt_a_line[, ppl_entered := entries - shift(entries), by=.(unit,scp)]
+dt_a_line[, ppl_exited := exits - shift(exits), by=.(unit,scp)]
+
+dt_a_line$ppl_entered %>% sum(na.rm = T)
+dt_a_line$ppl_exited %>% sum(na.rm = T)
+dt_a_line$ppl_exited %>% abs() %>% sum(na.rm = T)
+
+dt_a_line$time2 =  as.ITime(dt_a_line$time) 
+# filter out weird time points with bad data 
+dt_a_line = dt_a_line[minute(dt_a_line$time2) == 0 ,]
+
+
+dt_a_line[,.(total_in = sum(ppl_entered), total_out = sum(ppl_exited)), .(date, time)] %>% 
+  melt(measure.vars = c("total_in","total_out")) %>% 
+  ggplot(aes(x = time, y = value, group = interaction(date,variable), colour = date, shape = variable)) +
+  geom_line(aes( )) +
+  geom_point()
+
+dt_w_station = dt_a_line[,.(total_in = sum(ppl_entered), total_out = sum(ppl_exited)), .(date, time,station)]
+dt_w_station
+station_geo_cord[, c("stop_name","gtfs_latitude", "gtfs_longitude") ] %>% 
+  ggplot(aes(x = gtfs_longitude,y =gtfs_latitude )) +
+  geom_point()
+```
+
+
+Map information 
+```{r}
+station_geo_cord = fread("http://web.mta.info/developers/data/nyct/subway/Stations.csv") %>% janitor::clean_names()
+
+station_geo_cord$stop_name
+station_geo_cord$stop_name[str_detect(station_geo_cord$stop_name, "59")]
+```
+
